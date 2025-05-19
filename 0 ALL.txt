@@ -1,0 +1,1146 @@
+01
+
+
+%% DS-CDMA with 1/2-rate Convolutional Encoding in AWGN Channel
+% Author: [Your Name]
+% Description: BER performance evaluation of a convolutionally encoded DS-CDMA system in AWGN.
+
+clear; clc; close all;
+
+%% Parameters
+msgLength     = 1000;                   % Number of bits
+bitRate       = 1e3;                    % Bit rate (Hz)
+chipRate      = 10e3;                   % Chip rate (Hz)
+fc            = 5e3;                    % Carrier frequency (Hz)
+Eb            = 0.5;                    % Energy per bit (Joules)
+tb            = 1/bitRate;              % Bit duration (s)
+tc            = 1/chipRate;             % Chip duration (s)
+chipsPerBit   = chipRate / bitRate;
+samplesPerBit = chipsPerBit;            % 1 chip = 1 sample for simplicity
+snr_dB        = 0:1:10;                 % SNR in dB
+
+%% Generate Random Message
+msg = randi([0 1], 1, msgLength);
+
+%% Convolutional Encoding (1/2 rate)
+trellis = poly2trellis(3, [6 7]);
+encodedBits = convenc(msg, trellis);
+dataSymbols = 2 * encodedBits - 1;  % BPSK Mapping: 0 → -1, 1 → +1
+
+%% Time Vector
+t = 0:tc:(length(dataSymbols)*tb - tc);
+
+%% Generate Baseband Signal
+basebandSig = repelem(dataSymbols, samplesPerBit);
+
+%% BPSK Modulation
+carrier = cos(2 * pi * fc * t);
+bpskMod = sqrt(2 * Eb) * basebandSig .* carrier;
+
+%% PN Sequence Generator (Simple LFSR)
+pnSeed = [1 -1 1 -1];
+pnSeq = generatePN(pnSeed, length(dataSymbols), chipsPerBit);
+pnUpsampled = repelem(pnSeq, 1);
+
+%% Spread Signal
+spreadSig = bpskMod .* pnUpsampled;
+
+%% Plot Original Baseband Signal
+figure('Name', 'Baseband Signal', 'NumberTitle', 'off');
+plot(t(1:1000), basebandSig(1:1000), 'b', 'LineWidth', 1.2);
+xlabel('Time (s)'); ylabel('Amplitude');
+title('Baseband Signal (First 1000 Samples)');
+grid on; axis tight;
+
+%% Frequency Spectrum
+figure('Name', 'BPSK Spectrum', 'NumberTitle', 'off');
+N = length(t);
+f = (0:N-1)*(2*fc/N);
+plot(f, abs(fft(bpskMod)), 'r', 'LineWidth', 1.2);
+xlabel('Frequency (Hz)');
+ylabel('Magnitude');
+title('Spectrum of BPSK Modulated Signal');
+grid on; axis tight;
+
+%% Transmitted Signal Plot
+figure('Name', 'Transmitted DS-CDMA Signal', 'NumberTitle', 'off');
+plot(t(1:1000), spreadSig(1:1000), 'k', 'LineWidth', 1.2);
+xlabel('Time (s)');
+ylabel('Amplitude');
+title('Segment of Transmitted DS-CDMA Signal');
+grid on; axis tight;
+
+%% BER Simulation over AWGN Channel
+ber = zeros(1, length(snr_dB));
+
+for idx = 1:length(snr_dB)
+    % Add AWGN
+    rxSig = awgn(spreadSig, snr_dB(idx), 'measured');
+    
+    % Despread
+    despreadSig = rxSig .* pnUpsampled;
+    
+    % Coherent Demodulation
+    demodCarrier = sqrt(2 * Eb) * cos(2 * pi * fc * t);
+    demodulated = despreadSig .* demodCarrier;
+    
+    % Integrate over bit intervals
+    rxBits = [];
+    for i = 1:length(dataSymbols)
+        bitSamples = demodulated((i-1)*samplesPerBit + 1 : i*samplesPerBit);
+        rxBits(i) = sum(bitSamples) > 0;
+    end
+    
+    % Viterbi Decoder (hard decision)
+    traceback = 3;
+    decodedBits = vitdec(rxBits, trellis, traceback, 'cont', 'hard');
+    
+    % Calculate BER (ignoring traceback delay)
+    delay = traceback;
+    [~, ber(idx)] = biterr(decodedBits(delay+1:end), msg(1:end-delay));
+end
+
+%% Plot BER Performance
+figure('Name', 'BER Performance', 'NumberTitle', 'off');
+semilogy(snr_dB, ber, 'bo-', 'LineWidth', 2, 'MarkerSize', 6);
+xlabel('SNR (dB)');
+ylabel('Bit Error Rate (BER)');
+title('BER vs. SNR for Convolutionally Coded DS-CDMA in AWGN');
+legend('Simulation', 'Location', 'southwest');
+grid on; axis tight;
+
+
+
+function pnSeq = generatePN(seed, numBits, chipsPerBit)
+    % Generates a PN sequence for a given seed and length
+    pnSeq = [];
+    reg = seed;
+    for i = 1:numBits
+        for j = 1:chipsPerBit
+            pnSeq(end+1) = reg(4);
+            % LFSR tap: XOR(4,3) mapped to ±1
+            temp = xor(reg(4)==1, reg(3)==1) * 2 - 1;
+            reg = [temp reg(1:3)];
+        end
+    end
+end
+
+
+
+--------------------------------------------------------------------------02-------------------------------------------------------------------------------------------------
+% Convolutionally Encoded DS-CDMA System in AWGN and Rayleigh Fading
+clear; clc; close all;
+
+%% Parameters
+msg = randi([0 1], 1, 1000);                   % Random binary message
+trellis = poly2trellis(3, [6 7]);              % 1/2-rate convolutional encoder
+encodedBits = convenc(msg, trellis);           % Convolutional encoding
+encodedBits(encodedBits==0) = -1;              % BPSK Mapping: 0 -> -1, 1 -> +1
+
+fc = 5e3;                                      % Carrier frequency (Hz)
+Eb = 0.5;                                      % Energy per bit
+bitrate = 1e3;                                 % Bitrate (bps)
+tb = 1/bitrate;                                % Time per bit
+chiprate = 10e3;                               % Chiprate (10x bit rate)
+tc = 1/chiprate;                               % Time per chip
+chipsPerBit = chiprate / bitrate;
+
+t = 0:tc:tb*(length(encodedBits))-tc;          % Time vector
+
+%% Baseband Signal
+basebandsig = repelem(encodedBits, chipsPerBit);
+
+figure;
+stairs(t(1:800), basebandsig(1:800), 'LineWidth', 1.2);
+xlabel('Time (s)'); ylabel('Binary Value');
+title('Baseband Signal for Encoded Data');
+ylim([-1.5, 1.5]); grid on;
+
+%% BPSK Modulation
+bpskmod = sqrt(2*Eb) * basebandsig .* cos(2*pi*fc*t);
+
+%% Spectrum Analysis
+L = length(bpskmod);
+spectrum = abs(fft(bpskmod));
+f = (0:L-1) * (chiprate / L);                  % Frequency vector
+
+figure;
+plot(f, spectrum, 'LineWidth', 1.2);
+xlabel('Frequency (Hz)');
+ylabel('Magnitude');
+title('Spectrum of BPSK Modulated Signal');
+grid on;
+
+%% PN Sequence Generator (for 1 user)
+pn_seed = [1 -1 1 -1];                         % Bipolar NRZ format
+pn = zeros(1, length(encodedBits) * chipsPerBit);
+register = pn_seed;
+
+for i = 1:length(encodedBits)
+    for j = 1:chipsPerBit
+        pn((i-1)*chipsPerBit + j) = register(4);
+        feedback = xor(register(4) == 1, register(3) == 1);
+        register = [1 -2*feedback+1 register(1:3)];
+    end
+end
+
+pn(pn == 0) = -1;
+
+%% Spreading (DS-CDMA Transmit Signal)
+sigtx = bpskmod .* pn;
+
+figure;
+plot(t(1:200), sigtx(1:200), 'LineWidth', 1.2);
+xlabel('Time (s)');
+ylabel('Amplitude');
+title('Segment of DS-CDMA Transmitted Signal');
+grid on;
+
+%% Channel: Rayleigh Fading + AWGN
+rayleighChan = comm.RayleighChannel(...
+    'SampleRate', chiprate, ...
+    'PathDelays', 0, ...
+    'AveragePathGains', 0, ...
+    'MaximumDopplerShift', 100);
+
+%% BER Simulation over SNR
+snr_dB = 0:1:10;
+ber = zeros(size(snr_dB));
+
+for k = 1:length(snr_dB)
+    reset(rayleighChan);                               % Reset channel
+    fadedSig = rayleighChan(sigtx.');                  % Apply fading
+    noisySig = awgn(fadedSig, snr_dB(k), 'measured');  % Add AWGN
+    
+    %% Receiver: Despreading
+    rx = (noisySig.').* pn;                            % Despread
+    
+    %% BPSK Demodulation
+    demod = rx .* cos(2*pi*fc*t);                      % Coherent demod
+    demod_reshaped = reshape(demod, chipsPerBit, []);
+    sum_samples = sum(demod_reshaped, 1);
+    rxbits = double(sum_samples > 0);
+    
+    %% Viterbi Decoding
+    traceback = 3;
+    decoded = vitdec(rxbits, trellis, traceback, 'cont', 'hard');
+    
+    %% BER Calculation (delay compensation)
+    delay = traceback;
+    [~, ber(k)] = biterr(decoded(delay+1:end), msg(1:end-delay));
+end
+
+%% BER Plot
+figure;
+semilogy(snr_dB, ber, '-o', 'LineWidth', 1.5, 'MarkerSize', 6);
+xlabel('SNR (dB)');
+ylabel('Bit Error Rate (BER)');
+title('BER vs. SNR under Rayleigh Fading with AWGN');
+legend('1/2-Rate Coded DS-CDMA');
+grid on;
+
+
+
+
+---------------------------------------------------------------------------------------------------03-----------------------------------------------------------------------------------------
+
+% 1/2-Rated Convolutionally Encoded DS-CDMA System BER Simulation
+% under AWGN and Rician fading channel
+
+clear; close all; clc;
+
+% Parameters
+msgLen = 1000;             % Number of bits in message
+fc = 5000;                 % Carrier frequency (Hz)
+Eb = 0.5;                  % Energy per bit
+bitrate = 1000;            % Bitrate (bits/sec)
+tb = 1/bitrate;            % Bit duration (sec)
+chiprate = 10000;          % Chip rate (chips/sec)
+tc = 1/chiprate;           % Chip duration (sec)
+
+% Generate random message bits
+msg = randi([0 1],1,msgLen);
+
+% --- Figure 1: Original Message bits (first 100 bits) ---
+figure(1);
+stem(msg(1:100), 'filled');
+title('Original Message Bits (Segment)');
+xlabel('Bit Index');
+ylabel('Bit Value');
+ylim([-0.1 1.1]);
+grid on;
+
+% Convolutional Encoder: rate 1/2, constraint length 3, generators [6 7] octal
+trellis = poly2trellis(3,[6 7]);
+coded = convenc(msg, trellis);
+
+% Map 0->-1 and 1->1 (bipolar NRZ)
+codedBipolar = 2*coded - 1;
+
+% Length of coded sequence
+N = length(codedBipolar);
+
+% Time vector for chips
+t = tc:tc:tc*N;
+
+% BPSK Modulation
+bpskMod = sqrt(2*Eb) * codedBipolar .* cos(2*pi*fc*t);
+
+% --- Figure 2: BPSK Modulated Signal (segment) ---
+figure(2);
+plot(t(1:500), bpskMod(1:500));
+title('BPSK Modulated Signal (Segment)');
+xlabel('Time (s)');
+ylabel('Amplitude');
+grid on;
+
+% PN Sequence Generation (length = number of chips)
+seed = [1 -1 1 -1]; % Bipolar initial seed
+pn = zeros(1,N);
+state = seed;
+
+for i=1:N
+    pn(i) = state(end);
+    newBit = -state(end)*state(end-1); % XOR in bipolar: product
+    state = [newBit state(1:end-1)];
+end
+
+% Spread the BPSK modulated signal with PN sequence
+spreadSig = bpskMod .* pn;
+
+% --- Figure 3: Spread DS-CDMA Signal (segment) ---
+figure(3);
+plot(t(1:500), spreadSig(1:500));
+title('Spread DS-CDMA Signal (Segment)');
+xlabel('Time (s)');
+ylabel('Amplitude');
+grid on;
+
+% Rician channel object using comm.RicianChannel
+ricianChan = comm.RicianChannel(...
+    'SampleRate', 1/tc, ...
+    'PathDelays', 0, ...
+    'KFactor', 15, ...
+    'DirectPathDopplerShift', 0, ...
+    'MaximumDopplerShift', 0, ...
+    'DirectPathInitialPhase', 0);
+
+% SNR range (dB)
+snr_dB = 0:2:10;
+ber = zeros(size(snr_dB));
+
+% Traceback length for Viterbi decoder
+% Correct way to get constraint length:
+constraintLength = log2(trellis.numStates) + 1;
+tblen = 5 * constraintLength;
+
+for idx = 1:length(snr_dB)
+    % Reset channel for each SNR to get independent fading realizations
+    reset(ricianChan);
+    
+    % Pass signal through Rician channel
+    fadedSig = ricianChan(spreadSig')';  % transpose for column vector, then back
+    
+    % Add AWGN noise
+    rxSig = awgn(fadedSig, snr_dB(idx), 'measured');
+    
+    % Despread (multiply by PN sequence)
+    despread = rxSig .* pn;
+    
+    % Demodulate BPSK by correlating with carrier
+    carrier = sqrt(2*Eb) * cos(2*pi*fc*t);
+    demod = despread .* carrier;
+    
+    % Sum demodulated chips over each bit interval
+    chipsPerBit = chiprate / bitrate; % 10 chips per bit
+    numBitsCoded = length(demod) / chipsPerBit;
+    decisionVar = zeros(1, numBitsCoded);
+    for k = 1:numBitsCoded
+        decisionVar(k) = sum(demod((k-1)*chipsPerBit + 1 : k*chipsPerBit));
+    end
+    
+    % Decide bits from sign of decision variable
+    rxBits = decisionVar > 0;
+    
+    % Viterbi decoding (hard decision)
+    decodedBits = vitdec(rxBits, trellis, tblen, 'cont', 'hard');
+    
+    % Remove delay from decoding
+    delay = tblen;
+    decodedBits = decodedBits(delay+1:end);
+    msgTrimmed = msg(1:length(decodedBits));
+    
+    % Calculate Bit Error Rate (BER)
+    [~, ber(idx)] = biterr(decodedBits, msgTrimmed);
+end
+
+% --- Figure 4: BER vs SNR ---
+figure(4);
+semilogy(snr_dB, ber, '-o', 'LineWidth', 2);
+grid on;
+xlabel('SNR (dB)');
+ylabel('Bit Error Rate (BER)');
+title('BER Performance of 1/2-rate Convolutionally Encoded DS-CDMA System');
+legend('Rician Fading + AWGN');
+
+
+
+------------------------------------------------------------------------------04---------------------------------------------------------------
+clear all;
+close all;
+clc;
+
+% Input bit stream
+xbit = [1 0 1 1 0 1 0 0 0 1 1 0];
+
+% Differential encoding
+difencod(1) = ~(1 - xbit(1));
+for i = 2:length(xbit)
+    difencod(i) = ~(difencod(i-1) - xbit(i));
+end
+
+% Differential decoding (to re-derive xbit)
+xbit(1) = 1 - ~(difencod(1));
+for i = 2:length(xbit)
+    xbit(i) = difencod(i-1) - ~(difencod(i));
+    if xbit(i) == -1
+        xbit(i) = 1;
+    end
+end
+
+% Prepare inphase (I) and quadrature (Q) streams (unipolar)
+inp = zeros(1,length(difencod));
+qp = zeros(1,length(difencod));
+for i = 1:2:(length(difencod)-1)
+    inp(i) = difencod(i);
+    inp(i+1) = inp(i);
+end
+for i = 2:2:length(difencod)
+    qp(i) = difencod(i);
+    qp(i-1) = qp(i);
+end
+
+% Convert unipolar to bipolar NRZ
+it = 2*inp - 1;  % 1 -> 1, 0 -> -1
+qt = 2*qp - 1;
+
+% Raised cosine filter design using rcosdesign
+filtorder = 40;
+nsamp = 4;
+rolloff = 0.5;
+span = filtorder / nsamp; % Number of symbol periods the filter spans
+rrcfilter = rcosdesign(rolloff, span, nsamp, 'normal');
+
+% Plot impulse response
+figure(1);
+impz(rrcfilter,1);
+grid on;
+title('Impulse Response of Raised Cosine Filter');
+
+% Transmit filtering (upsample and filter)
+itx = upfirdn(it, rrcfilter, nsamp, 1);
+qtx = upfirdn(qt, rrcfilter, nsamp, 1);
+
+% Time vector for plots
+Drate = 64000; % bit rate
+T = 1 / Drate;
+Ts = T / nsamp;
+time_itx = (0:length(itx)-1) * Ts;
+time_qtx = (0:length(qtx)-1) * Ts;
+
+% Plot filtered I and Q signals
+figure(2);
+plot(time_itx, itx);
+xlabel('Time (sec)');
+ylabel('Amplitude (volt)');
+title('Low pass filtered InPhase Component');
+grid on;
+
+figure(3);
+plot(time_qtx, qtx);
+xlabel('Time (sec)');
+ylabel('Amplitude (volt)');
+title('Low pass filtered Quadrature Component');
+grid on;
+
+% Carrier frequency and modulation
+fc = 900e6; % 900 MHz carrier frequency
+dd = 2*pi*fc*time_itx';
+ddd = 2*pi*fc*time_qtx';
+
+% Offset quadrature by nsamp samples (half symbol delay)
+delay = zeros(size(qtx));
+delay(nsamp+1:end) = qtx(1:end-nsamp);
+
+% OQPSK modulated signal
+mt = cos(dd).*itx + sin(ddd).*delay';
+
+figure(4);
+plot(time_itx, mt);
+xlabel('Time (sec)');
+ylabel('Amplitude (volt)');
+title('Differentially encoded OQPSK modulated signal');
+grid on;
+
+% Add AWGN noise with SNR 10 dB
+snr = 10;
+madd = awgn(mt, snr, 'measured');
+
+figure(5);
+plot(time_itx, madd);
+xlabel('Time (sec)');
+ylabel('Amplitude (volt)');
+title('OQPSK Signal with AWGN (SNR=10 dB)');
+grid on;
+
+% Demodulation: multiply with carrier
+cscomp = madd .* cos(dd);
+sincomp = madd .* sin(ddd);
+
+% Low pass filtering of demodulated signals
+lpfin = upfirdn(cscomp, rrcfilter, 1, nsamp);
+lpfqu = upfirdn(sincomp, rrcfilter, 1, nsamp);
+
+% Time vectors for filtered demod signals
+tmx = (0:length(lpfin)-1) * Ts * nsamp;
+tmy = (0:length(lpfqu)-1) * Ts * nsamp;
+
+figure(6);
+plot(tmx, lpfin);
+xlabel('Time (sec)');
+ylabel('Amplitude');
+title('Low pass filtered I-channel after demodulation');
+grid on;
+
+figure(7);
+plot(tmy, lpfqu);
+xlabel('Time (sec)');
+ylabel('Amplitude');
+title('Low pass filtered Q-channel after demodulation');
+grid on;
+
+% Sampling points for decision (accounting for filter delay)
+len_lpfin = length(lpfin);
+samplePoints = round(span*nsamp + nsamp*(0:length(xbit)-1));
+samplePoints(samplePoints > len_lpfin) = [];  % Prevent out-of-range
+
+% Initialize decoded bit arrays
+chk1 = zeros(1,length(samplePoints));
+chk2 = zeros(1,length(samplePoints));
+
+for i = 1:length(samplePoints)
+    chk1(i) = lpfin(samplePoints(i)) > 0;
+    chk2(i) = lpfqu(samplePoints(i)) > 0;
+end
+
+% Convert logicals to bipolar NRZ (1 -> 1, 0 -> -1)
+chk1 = 2*chk1 - 1;
+chk2 = 2*chk2 - 1;
+
+disp('I channel bit stream checking');
+distortionI = sum((it(1:length(chk1)) - chk1).^2) / length(chk1);
+disp(distortionI);
+
+disp('Q channel bit stream checking');
+distortionQ = sum((qt(1:length(chk2)) - chk2).^2) / length(chk2);
+disp(distortionQ);
+
+% Differential decoding from I and Q
+dfd = zeros(1,length(xbit));
+dfd(1:2:end) = chk1(1:2:end);
+dfd(2:2:end) = chk2(2:2:end);
+
+dfdecod = zeros(1,length(dfd));
+dfdecod(dfd==1) = 1;
+dfdecod(dfd==-1) = 0;
+
+detected(1) = 1 - ~dfdecod(1);
+for i = 2:length(dfd)
+    detected(i) = dfdecod(i-1) - ~dfdecod(i);
+    if detected(i) == -1
+        detected(i) = 1;
+    end
+end
+
+disp('Distortion between transmitted and received NRZ bit stream');
+distortionTotal = sum((xbit - detected).^2) / length(detected);
+disp(distortionTotal);
+
+% Plot transmitted and detected bit streams
+tmx_bits = (0:length(xbit)-1) / Drate;
+
+figure(8);
+subplot(2,1,1);
+stairs(tmx_bits, xbit, 'LineWidth', 1.5);
+ylim([-0.2 1.2]);
+xlabel('Time (sec)');
+ylabel('Bit Value');
+title('Transmitted Bit Stream');
+grid on;
+
+subplot(2,1,2);
+stairs(tmx_bits, detected, 'LineWidth', 1.5);
+ylim([-0.2 1.2]);
+xlabel('Time (sec)');
+ylabel('Bit Value');
+title('Received Bit Stream');
+grid on;
+
+
+--------------------------------------------------------------------------05----------------------------------------------------------------------
+
+clear all;
+close all;
+clc;
+%% Parameters for Synthetic Signal
+f = 1000;       % Frequency of audio signal (Hz)
+Fs = 4000;      % Sampling frequency (samples/sec)
+t = (1/Fs:1/Fs:1); % Time vector (1 sec duration)
+Am = 1.0;       % Amplitude of signal
+
+% Generate original sinusoidal signal
+signal = Am * sin(2 * pi * f * t);
+
+% Plot original sinusoidal waveform (Segment)
+figure(1);
+plot(t(1:200), signal(1:200));
+set(gca, 'ytick', [-1 0 1]);
+title('Segment of Original Sinusoidal Waveform');
+xlabel('Time (sec)');
+ylabel('Amplitude (volt)');
+grid on;
+
+%% Quantization (8-bit uniform)
+maxVal = max(signal);
+minVal = min(signal);
+interval = (maxVal - minVal) / 255;
+partition = minVal:interval:maxVal;
+codebook = (minVal - interval):interval:maxVal;
+
+[index, quants, distor] = quantiz(signal, partition, codebook);
+
+% Convert decimal indices to binary (8 bits per sample)
+indxtrn = index';
+matrix = zeros(length(indxtrn), 8);
+
+for i = 1:length(indxtrn)
+    matrix(i, :) = bitget(uint8(indxtrn(i)), 1:8);
+end
+
+matrixtps = matrix'; % 8 x N matrix
+
+% Create baseband bit stream (column vector)
+baseband = reshape(matrixtps, [], 1);
+
+Tb = 1 / (Fs * 8);  % Bit duration (32 kbps bit rate)
+time = 0:Tb:Tb * (length(baseband) - 1);
+
+% Plot baseband binary signal segment
+figure(2);
+stairs(time(1:500), baseband(1:500));
+title('Segment of Baseband Binary Signal');
+xlabel('Time (sec)');
+ylabel('Binary value');
+set(gca, 'ytick', [0 1]);
+axis([0 time(500) 0 1]);
+grid on;
+
+%% Convolutional Encoding
+input_to_Convolutional_encoder = baseband';  % 1 x total bits
+
+trellis = poly2trellis(7, [171 133]);  % Constraint length 7, polynomials in octal
+code = convenc(input_to_Convolutional_encoder, trellis);
+
+%% Interleaving
+interleaver_depth = 4831;
+data_interleave = randintrlv(code, interleaver_depth);
+
+%% BPSK Modulation
+M = 2;
+k = log2(M);
+
+% Convert bits to symbols
+symbol = bi2de(reshape(data_interleave, k, []).', 'left-msb');
+symbol = double(symbol);
+
+bpsk_modulated_data = pskmod(symbol, M);
+
+%% BPSK Demodulation
+bpsk_demodulated = pskdemod(bpsk_modulated_data, M);
+
+% Symbol error count
+[num_err, ratio_err] = symerr(symbol, bpsk_demodulated);
+
+% Convert symbols back to bits
+retrieved_bits = de2bi(bpsk_demodulated, k, 'left-msb');
+
+%% Deinterleaving and Decoding
+% Include burst error simulation (zero errors here)
+errors = zeros(size(retrieved_bits));
+inter_err = bitxor(retrieved_bits, errors);
+
+data_deinterleave = randdeintrlv(inter_err, interleaver_depth);
+
+tblen = 3; % Traceback length for Viterbi decoding
+decodx = vitdec(data_deinterleave, trellis, tblen, 'cont', 'hard');
+
+% Fix indexing for decoded bits
+N3 = length(decodx);
+decod2 = zeros(1, N3);
+decod2(1:(N3 - tblen)) = decodx(tblen+1:end);
+decod2(N3) = decodx(1);
+
+decod2 = decod2';  % Column vector
+
+%% Error Checking
+[number_bits_err, bit_error_ratio] = biterr(decod2, baseband);
+
+convert = reshape(decod2, 8, length(signal));  % 8 x 4000 matrix
+convert = convert';
+
+[number_conv_err, conv_error_ratio] = biterr(convert, matrixtps');
+
+% Convert binary back to decimal
+intconv = bi2de(convert);
+
+[number_final_err, final_error_ratio] = biterr(intconv, index');
+
+% Reconstruct signal from quantized levels
+reconstructed_signal = minVal + intconv * interval;
+
+%% Plot original vs reconstructed signals
+figure(3);
+subplot(2,1,1);
+plot(time(1:100), signal(1:100));
+set(gca, 'ytick', [-1 0 1]);
+axis([0 time(100) -1 1]);
+title('Segment of Original Audio Signal');
+xlabel('Time (sec)');
+ylabel('Amplitude');
+grid on;
+
+subplot(2,1,2);
+plot(time(1:100), reconstructed_signal(1:100));
+set(gca, 'ytick', [-1 0 1]);
+axis([0 time(100) -1 1]);
+title('Segment of Retrieved Audio Signal after Decoding');
+xlabel('Time (sec)');
+ylabel('Amplitude');
+grid on;
+
+
+
+
+-------------------------------------------------------------06------------------------------------------------------------------------------------
+
+
+clear all;
+close all;
+clc;
+
+% Parameters
+f = 1000;         % Frequency of the audio signal
+Fs = 4000;        % Sampling rate
+t = 1/Fs : 1/Fs : 1; % Time vector for 1 second
+Am = 1.0;         % Amplitude
+
+% Generate original sinusoidal signal
+signal = Am * sin(2*pi*f*t);
+figure(1);
+plot(t(1:200), signal(1:200))
+set(gca,'ytick',[-1 0 1])
+title('A segment of synthetically generated sinusoidal waveform')
+grid on
+xlabel('Time (sec)')
+ylabel('Amplitude (volt)')
+
+% Quantization parameters
+maximumvalue = max(signal);
+minimumvalue = min(signal);
+interval = (maximumvalue - minimumvalue) / 255; % 256 levels
+partition = minimumvalue:interval:maximumvalue;
+codebook = (minimumvalue - interval):interval:maximumvalue;
+
+% Quantize signal
+[index, ~, ~] = quantiz(signal, partition, codebook);
+
+% Convert quantized decimal values to binary bits (8 bits per sample)
+indxtrn = index';
+matrix = zeros(length(indxtrn),8);
+for i = 1:length(indxtrn)
+    matrix(i, :) = bitget(uint8(indxtrn(i)), 1:8);
+end
+
+% Transpose matrix to get bits in columns
+matrixtps = matrix'; % 8 rows x 4000 columns
+
+% Convert bit matrix into a serial baseband bitstream
+baseband = reshape(matrixtps, [], 1); % 32000 bits (8*4000)
+Tb = 1/32000;    % Bit duration
+time = 0 : Tb : (length(baseband)-1)*Tb;
+
+% Plot baseband signal segment
+figure(2);
+stairs(time(1:500), baseband(1:500))
+title('A segment of baseband signal')
+xlabel('Time (sec)')
+ylabel('Binary value')
+set(gca,'ytick',[0 1])
+axis([0 time(500) 0 1])
+
+% Convolutional Encoder Setup
+input_to_Convolutional_encoder = baseband'; % Row vector
+trellis = poly2trellis(7, [171 133]);
+code = convenc(input_to_Convolutional_encoder, trellis); % Encoded bits
+
+% Interleaving
+interleaver_depth = 4831;
+data_interleave = randintrlv(code, interleaver_depth);
+
+% QPSK Modulation
+M = 4;
+k = log2(M);
+% Ensure length is multiple of k
+if mod(length(data_interleave), k) ~= 0
+    data_interleave = [data_interleave zeros(1, k - mod(length(data_interleave), k))];
+end
+symbol = bi2de(reshape(data_interleave, k, length(data_interleave)/k).', 'left-msb');
+qpsk_modulated_data = pskmod(symbol, M);
+
+% QPSK Demodulation
+qpsk_demodulated_symbol = pskdemod(qpsk_modulated_data, M);
+
+% Symbol error calculation
+[number, ratio] = symerr(symbol, qpsk_demodulated_symbol);
+fprintf('Symbol errors: %d, Symbol error rate: %f\n', number, ratio);
+
+% Convert demodulated symbols back to bits
+retrieved_bits = de2bi(qpsk_demodulated_symbol, k, 'left-msb')';
+retrieved_bits = reshape(retrieved_bits, [], 1);
+
+% Deinterleaving
+errors = zeros(size(retrieved_bits));
+interleaved_with_errors = bitxor(retrieved_bits, errors);
+data_deinterleave = randdeintrlv(interleaved_with_errors, interleaver_depth);
+
+% Viterbi Decoding
+tblen = 3;
+decoded_bits = vitdec(data_deinterleave, trellis, tblen, 'cont', 'hard');
+
+% Trim first tblen bits (due to decoding delay)
+decoded_bits_trimmed = decoded_bits(tblen+1:end)';
+baseband_trimmed = baseband(tblen+1:end)';
+
+% Ensure vectors have same length for BER calculation
+min_length = min(length(decoded_bits_trimmed), length(baseband_trimmed));
+decoded_bits_trimmed = decoded_bits_trimmed(1:min_length);
+baseband_trimmed = baseband_trimmed(1:min_length);
+
+% Bit error rate after decoding
+[~, ber1] = biterr(decoded_bits_trimmed, baseband_trimmed);
+fprintf('Bit Error Rate after decoding: %f\n', ber1);
+
+% Reshape trimmed decoded bits to 8-bit rows (bytes)
+if mod(length(decoded_bits_trimmed), 8) ~= 0
+    padding = zeros(1, 8 - mod(length(decoded_bits_trimmed), 8));
+    decoded_bits_trimmed = [decoded_bits_trimmed padding];
+end
+decoded_matrix = reshape(decoded_bits_trimmed, 8, [])';
+
+% Check if sizes match before BER check
+if size(decoded_matrix,1) == size(matrixtps,2)
+    [~, ber2] = biterr(decoded_matrix', matrixtps);
+    fprintf('Bit Error Rate between decoded bits and original bit matrix: %f\n', ber2);
+else
+    fprintf('Size mismatch between decoded matrix (%d) and original bit matrix (%d).\n', ...
+            size(decoded_matrix,1), size(matrixtps,2));
+end
+
+% Convert decoded bits to decimal values
+int_decoded = bi2de(decoded_matrix(1:length(index),:));
+
+% BER between decoded integers and quantization indices
+[~, ber3] = biterr(int_decoded, index');
+fprintf('Bit Error Rate between decoded integers and original quantized indices: %f\n', ber3);
+
+% Reconstruct signal from decoded quantized levels
+sample_value = minimumvalue + int_decoded * interval;
+
+% Plot original and retrieved audio segments
+figure(3);
+subplot(2,1,1)
+plot(t(1:100), signal(1:100));
+set(gca, 'ytick', [-1 0 1])
+axis([0 t(100) -1 1])
+title('Original audio signal segment')
+xlabel('Time (sec)')
+ylabel('Amplitude')
+grid on
+
+subplot(2,1,2)
+plot(t(1:100), sample_value(1:100));
+set(gca, 'ytick', [-1 0 1])
+axis([0 t(100) -1 1])
+title('Retrieved audio signal segment after decoding')
+xlabel('Time (sec)')
+ylabel('Amplitude')
+grid on
+
+
+
+
+
+--------------------------------------------------------------------07------------------------------------------------------------------------
+
+clc;
+clear all;
+close all;
+
+
+% Parameters
+f = 1000;            % Frequency of audio signal (Hz)
+Fs = 4000;           % Sampling frequency (samples/sec)
+t = 1/Fs : 1/Fs : 1; % Time vector for 1 second
+Am = 1.0;            % Amplitude
+
+% Generate sinusoidal signal
+signal = Am * sin(2 * pi * f * t);
+
+% Plot original signal segment
+figure(1);
+plot(t(1:200), signal(1:200));
+set(gca, 'ytick', [-1 0 1]);
+title('Original Audio Signal Segment');
+xlabel('Time (sec)');
+ylabel('Amplitude (volt)');
+grid on;
+
+% Quantization parameters
+maximumvalue = max(signal);
+minimumvalue = min(signal);
+interval = (maximumvalue - minimumvalue) / 255;
+partition = minimumvalue : interval : maximumvalue;
+codebook = (minimumvalue - interval) : interval : maximumvalue;
+
+% Quantize the signal
+[index, quants, distor] = quantiz(signal, partition, codebook);
+
+% Convert to 8-bit binary representation
+indxtrn = index';
+matrix = zeros(length(indxtrn), 8);
+for i = 1:length(indxtrn)
+    matrix(i, :) = bitget(uint8(indxtrn(i)), 1:8);
+end
+
+% Create baseband bitstream
+matrixtps = matrix';
+baseband = reshape(matrixtps, [], 1);
+Tb = 1/32000;
+time = 0 : Tb : (length(baseband)-1)*Tb;
+
+% Plot baseband signal
+figure(2);
+stairs(time(1:500), baseband(1:500));
+title('Baseband Signal Segment');
+xlabel('Time (sec)');
+ylabel('Binary value');
+set(gca, 'ytick', [0 1]);
+axis([0 time(500) 0 1]);
+
+% Convolutional Encoding
+trellis = poly2trellis(7, [171 133]);
+code = convenc(baseband', trellis);
+
+% Interleaving
+interleaver_depth = 4831;
+data_interleave = randintrlv(code, interleaver_depth);
+
+% QAM Modulation
+M = 4;
+k = log2(M);
+% Pad with zeros if needed
+if mod(length(data_interleave), k) ~= 0
+    data_interleave = [data_interleave zeros(1, k-mod(length(data_interleave),k))];
+end
+symbol = bi2de(reshape(data_interleave, k, []).', 'left-msb');
+qam_modulated_data = qammod(symbol, M);
+
+% QAM Demodulation
+qam_demodulated_symbol = qamdemod(qam_modulated_data, M);
+
+% Symbol error rate
+[number, ratio] = symerr(symbol, qam_demodulated_symbol);
+fprintf('Symbol errors: %d, Symbol error rate: %f\n', number, ratio);
+
+% Convert back to bits
+retrieved_bits = de2bi(qam_demodulated_symbol, k, 'left-msb')';
+retrieved_bits = reshape(retrieved_bits, [], 1);
+
+% Deinterleaving
+data_deinterleave = randdeintrlv(retrieved_bits, interleaver_depth);
+
+% Viterbi Decoding
+tblen = 3;
+decoded_bits = vitdec(data_deinterleave, trellis, tblen, 'cont', 'hard');
+
+% Trim and align vectors
+decoded_bits_trimmed = decoded_bits(tblen+1:end)';
+baseband_trimmed = baseband(tblen+1:end)';
+
+% Ensure equal length
+min_len = min(length(decoded_bits_trimmed), length(baseband_trimmed));
+decoded_bits_trimmed = decoded_bits_trimmed(1:min_len);
+baseband_trimmed = baseband_trimmed(1:min_len);
+
+% Calculate BER
+[~, ber1] = biterr(decoded_bits_trimmed, baseband_trimmed);
+fprintf('Bit Error Rate after decoding: %f\n', ber1);
+
+% Reshape to bytes
+if mod(length(decoded_bits_trimmed), 8) ~= 0
+    padding = zeros(1, 8-mod(length(decoded_bits_trimmed),8));
+    decoded_bits_trimmed = [decoded_bits_trimmed padding];
+end
+decoded_matrix = reshape(decoded_bits_trimmed, 8, [])';
+
+% Compare with original
+if size(decoded_matrix,1) == size(matrixtps,2)
+    [~, ber2] = biterr(decoded_matrix', matrixtps);
+    fprintf('Bit Error Rate vs original bit matrix: %f\n', ber2);
+else
+    fprintf('Size mismatch in bit matrix comparison\n');
+end
+
+% Convert to samples
+int_decoded = bi2de(decoded_matrix(1:length(index),:));
+sample_value = minimumvalue + int_decoded * interval;
+
+% Plot comparison
+figure(3);
+subplot(2,1,1);
+plot(t(1:100), signal(1:100));
+title('Original Signal');
+xlabel('Time (sec)');
+ylabel('Amplitude');
+grid on;
+
+subplot(2,1,2);
+plot(t(1:100), sample_value(1:100));
+title('Decoded Signal');
+xlabel('Time (sec)');
+ylabel('Amplitude');
+grid on;
+
+
+----------------------------------------------------------------------08----------------------------------------------------------------------
+
+
+clc;
+clear all;
+close all;
+
+%% 1. Generate Synthetic Audio Signal
+Fs = 4000;              
+f = 1000;               
+t = 0:1/Fs:1-1/Fs;      
+Am = 1.0;
+signal = Am * sin(2*pi*f*t);  
+
+% Plot 1: Original waveform
+figure(1);
+plot(t(1:200), signal(1:200));
+title('Original Audio Signal Segment');
+xlabel('Time (s)');
+ylabel('Amplitude');
+grid on;
+
+%% 2. Quantization
+max_val = max(signal);
+min_val = min(signal);
+interval = (max_val - min_val) / 255;
+partition = min_val:interval:max_val;
+codebook = [min_val-interval:interval:max_val];
+[index, quants, distor] = quantiz(signal, partition, codebook);
+
+%% 3. Convert to Binary Bit Stream
+index = index';
+binary_matrix = zeros(length(index), 8);
+for i = 1:length(index)
+    binary_matrix(i,:) = bitget(uint8(index(i)), 8:-1:1);  
+end
+binary_matrix = binary_matrix';
+bit_stream = reshape(binary_matrix, [], 1);  
+
+% Plot 2: Baseband signal (binary)
+Tb = 1 / length(bit_stream);
+time_bit = 0:Tb:(length(bit_stream)-1)*Tb;
+figure(2);
+stairs(time_bit(1:500), bit_stream(1:500));
+title('Baseband Binary Signal Segment');
+xlabel('Time (s)');
+ylabel('Binary Value');
+axis([0, time_bit(500), 0, 1]);
+grid on;
+
+%% 4. FEC Encoding (Convolutional)
+trellis = poly2trellis(7, [171 133]);
+coded_bits = convenc(bit_stream', trellis);  
+
+%% 5. Interleaving
+seed = 4831;
+interleaved_bits = randintrlv(coded_bits, seed);
+
+%% 6. 16-QAM Modulation
+M = 16;
+k = log2(M);  
+symbols = bi2de(reshape(interleaved_bits, k, []).', 'left-msb');
+modulated_signal = qammod(symbols, M, 'UnitAveragePower', true);
+
+%% 7. 16-QAM Demodulation
+demodulated_symbols = qamdemod(modulated_signal, M, 'UnitAveragePower', true);
+retrieved_bits = de2bi(demodulated_symbols, k, 'left-msb')';
+retrieved_bits = reshape(retrieved_bits, [], 1);
+
+%% 8. Deinterleaving
+deinterleaved_bits = randdeintrlv(retrieved_bits', seed);
+
+%% 9. Viterbi Decoding
+tblen = 35;  
+decoded_bits = vitdec(deinterleaved_bits, trellis, tblen, 'cont', 'hard');
+decoded_bits = decoded_bits(tblen+1:end);  
+decoded_bits = decoded_bits(:);
+
+%% 10. Bit Stream Trimming and Reshape
+min_len = min(length(bit_stream), length(decoded_bits));
+bit_stream_trimmed = bit_stream(1:min_len);
+decoded_bits_trimmed = decoded_bits(1:min_len);
+
+% Make length divisible by 8
+L = floor(min_len / 8) * 8;
+bit_stream_trimmed = bit_stream_trimmed(1:L);
+decoded_bits_trimmed = decoded_bits_trimmed(1:L);
+
+% Reconstruct quantized values
+reshape_bits = reshape(decoded_bits_trimmed, 8, []).'; 
+int_values = bi2de(reshape_bits, 'left-msb');
+reconstructed_signal = min_val + int_values * interval;
+
+% Plot 3: Original vs Reconstructed Signal
+figure(3);
+subplot(2,1,1);
+plot(t(1:100), signal(1:100));
+title('Original Audio Signal');
+xlabel('Time (s)');
+ylabel('Amplitude');
+grid on;
+
+subplot(2,1,2);
+plot(t(1:100), reconstructed_signal(1:100));
+title('Retrieved Audio Signal');
+xlabel('Time (s)');
+ylabel('Amplitude');
+grid on;
+
+%% 11. Bit Error Rate
+[bit_errors, bit_error_rate] = biterr(bit_stream_trimmed, decoded_bits_trimmed);
+fprintf('\nTotal Bit Errors: %d\nBit Error Rate: %.5f\n', bit_errors, bit_error_rate);
